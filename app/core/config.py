@@ -1,0 +1,25 @@
+from pydantic_settings import BaseSettings, SettingsConfigDict
+from typing import List
+
+class Settings(BaseSettings):
+    APP_NAME: str = "Plant Disease Classifier API"
+    APP_VERSION: str = "1.0.0"
+    DEBUG: bool = True
+    API_V1_PREFIX: str = "/api/v1"
+    
+    SECRET_KEY: str
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440
+    
+    DATABASE_URL: str
+    
+    MODEL_PATH: str = "models/apple_disease_model.pth"
+    MAX_IMAGE_SIZE_MB: int = 5
+    ALLOWED_IMAGE_TYPES: str = "image/jpeg,image/png"
+
+    @property
+    def allowed_image_types_list(self) -> List[str]:
+        return self.ALLOWED_IMAGE_TYPES.split(",")
+
+    model_config = SettingsConfigDict(env_file=".env")
+
+settings = Settings()
