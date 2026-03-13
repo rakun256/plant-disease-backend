@@ -6,10 +6,5 @@ venv/
 __pycache__/
 *.py[cod]
 
-# Modeller
-models/*.pt
-models/*.pth
-*.h5
-
 # OS
 .DS_Store

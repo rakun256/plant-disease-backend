@@ -13,5 +13,6 @@ alembic
 pytest
 httpx
 dotenv
-python-dotenvemail-validator
+python-dotenv
+email-validator
 bcrypt==3.2.0
