@@ -7,17 +7,8 @@ services:
     healthCheckPath: /api/v1/health
     envVars:
       - key: DATABASE_URL
-        fromDatabase:
-          name: plant-disease-db
-          property: connectionString
       - key: SECRET_KEY
         generateValue: true
       - key: MODEL_PATH
         value: models/resnet50_best.pt
 
-databases:
-  - name: plant-disease-db
-    databaseName: plantdisease
-    user: plantadmin
-    region: frankfurt
-    plan: free # Render PostgreSQL bedava tier
