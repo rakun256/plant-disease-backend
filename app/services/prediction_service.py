@@ -8,6 +8,7 @@ from app.ml.class_names import CLASS_MAPPING
 from app.schemas.prediction import GradCamExplanationResponse, ImageQualityResponse, PredictionResponse
 from app.services.gradcam_service import generate_gradcam_explanation
 from app.services.image_quality_service import assess_image_quality
+from app.services.input_assessment_service import build_input_assessment
 from app.core.config import settings
 from app.core.constants import LOW_CONFIDENCE_WARNING_MESSAGE, SUPPORTED_CLASSES, WARNING_MESSAGE
 from app.models.prediction import Prediction
@@ -41,6 +42,8 @@ async def process_prediction(
         warning_messages.extend(image_quality.quality_warnings)
     explanation = _build_explanation(include_explanation, tensor, image, predicted_class, warning_messages)
     warning = " ".join(warning_messages)
+    image_quality_response = ImageQualityResponse(**image_quality.to_dict())
+    input_assessment = build_input_assessment(is_low_confidence, image_quality_response)
     
     # 4. Save to DB (Optional)
     if save_result and user:
@@ -74,7 +77,8 @@ async def process_prediction(
         scores=scores,
         supported_classes=SUPPORTED_CLASSES,
         warning=warning,
-        image_quality=ImageQualityResponse(**image_quality.to_dict()),
+        image_quality=image_quality_response,
+        input_assessment=input_assessment,
         explanation=explanation
     )
 

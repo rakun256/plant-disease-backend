@@ -14,6 +14,7 @@ class PredictionResponse(BaseModel):
     supported_classes: List[str]
     warning: str
     image_quality: "ImageQualityResponse"
+    input_assessment: "InputAssessmentResponse"
     explanation: Optional["GradCamExplanationResponse"] = None
 
 class PredictionHistoryResponse(BaseModel):
@@ -27,6 +28,7 @@ class PredictionHistoryResponse(BaseModel):
     created_at: datetime
     scores: Dict[str, float]
     image_quality: Optional["ImageQualityResponse"] = None
+    input_assessment: "InputAssessmentResponse"
 
     class Config:
         from_attributes = True
@@ -50,6 +52,12 @@ class GradCamExplanationResponse(BaseModel):
     heatmap_image_base64: str
     disclaimer: str
     explanation_time_ms: Optional[float] = None
+
+class InputAssessmentResponse(BaseModel):
+    is_supported_input_likely: bool
+    should_show_prediction: bool
+    reason_codes: List[str]
+    message: str
 
 class PredictionFeedbackCreate(BaseModel):
     is_correct: bool

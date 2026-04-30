@@ -6,6 +6,7 @@ from app.api.dependencies import get_current_user
 from app.models.user import User
 from app.models.prediction import Prediction
 from app.schemas.prediction import ImageQualityResponse, PredictionHistoryResponse
+from app.services.input_assessment_service import build_input_assessment
 import json
 
 router = APIRouter()
@@ -27,6 +28,7 @@ def get_prediction_history(
     
     results = []
     for p in predictions:
+        image_quality = _build_image_quality_response(p)
         results.append(PredictionHistoryResponse(
             id=p.id,
             image_name=p.image_name,
@@ -37,7 +39,8 @@ def get_prediction_history(
             model_version=p.model_version,
             created_at=p.created_at,
             scores=json.loads(p.scores_json) if p.scores_json else {},
-            image_quality=_build_image_quality_response(p)
+            image_quality=image_quality,
+            input_assessment=build_input_assessment(p.is_low_confidence, image_quality)
         ))
     return results
 

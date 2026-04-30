@@ -342,7 +342,11 @@ def test_prediction_response_includes_latency_and_low_confidence(monkeypatch, db
     assert response.supported_classes == ["healthy", "rust", "scab"]
     assert response.image_quality.width == 256
     assert response.image_quality.is_quality_acceptable is True
-    assert response.warning == "The model confidence is low. Please retake the image under better lighting or consult an agricultural expert."
+    assert response.input_assessment.is_supported_input_likely is False
+    assert response.input_assessment.should_show_prediction is False
+    assert response.input_assessment.reason_codes == ["LOW_CONFIDENCE"]
+    assert "outside the supported apple leaf classes" in response.input_assessment.message
+    assert "outside the supported apple leaf classes" in response.warning
     assert response.explanation is None
 
 
@@ -365,6 +369,9 @@ def test_saved_prediction_persists_latency_and_low_confidence(monkeypatch, db_se
 
     assert response.inference_time_ms >= 0
     assert response.is_low_confidence is False
+    assert response.input_assessment.is_supported_input_likely is True
+    assert response.input_assessment.should_show_prediction is True
+    assert response.input_assessment.reason_codes == []
     assert saved_prediction.inference_time_ms is not None
     assert saved_prediction.inference_time_ms >= 0
     assert saved_prediction.is_low_confidence is False
@@ -391,7 +398,30 @@ def test_prediction_endpoint_without_explanation_returns_null(client, db_session
     assert data["predicted_class"] == "rust"
     assert data["confidence"] == 0.91
     assert data["image_quality"]["is_quality_acceptable"] is True
+    assert data["input_assessment"]["should_show_prediction"] is True
+    assert data["input_assessment"]["reason_codes"] == []
     assert data["explanation"] is None
+
+
+def test_prediction_endpoint_low_quality_returns_should_not_show_prediction(client, db_session, monkeypatch):
+    user = create_user(db_session, "owner@example.com")
+    mock_prediction_dependencies(monkeypatch)
+
+    response = client.post(
+        "/api/v1/predictions/",
+        headers=auth_headers(user),
+        data={"save_result": "false", "include_explanation": "false"},
+        files={"file": image_file_tuple(Image.new("RGB", (256, 256), (10, 10, 10)))},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["confidence"] == 0.91
+    assert data["image_quality"]["is_quality_acceptable"] is False
+    assert data["input_assessment"]["is_supported_input_likely"] is False
+    assert data["input_assessment"]["should_show_prediction"] is False
+    assert data["input_assessment"]["reason_codes"] == ["LOW_IMAGE_QUALITY"]
+    assert "The image is too dark. Please use better lighting." in data["input_assessment"]["message"]
 
 
 def test_prediction_endpoint_with_explanation_returns_gradcam_object(client, db_session, monkeypatch):
@@ -496,6 +526,8 @@ def test_history_returns_latency_and_low_confidence(client, db_session):
     assert data[0]["is_low_confidence"] is False
     assert data[0]["image_quality"]["quality_score"] == 0.86
     assert data[0]["image_quality"]["is_quality_acceptable"] is True
+    assert data[0]["input_assessment"]["should_show_prediction"] is True
+    assert data[0]["input_assessment"]["reason_codes"] == []
 
 
 def test_history_handles_old_records_without_quality_metadata(client, db_session):
@@ -514,7 +546,9 @@ def test_history_handles_old_records_without_quality_metadata(client, db_session
     response = client.get("/api/v1/history/", headers=auth_headers(user))
 
     assert response.status_code == 200
-    assert response.json()[0]["image_quality"] is None
+    data = response.json()[0]
+    assert data["image_quality"] is None
+    assert data["input_assessment"]["should_show_prediction"] is True
 
 
 def test_history_returns_newest_predictions_first(client, db_session):
