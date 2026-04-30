@@ -13,6 +13,7 @@ router = APIRouter()
 async def predict_image(
     file: UploadFile = File(...),
     save_result: bool = Form(default=True),
+    include_explanation: bool = Form(default=False),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -20,7 +21,7 @@ async def predict_image(
     Upload an image of an apple leaf to get a disease prediction.
     Supported types: JPEG, PNG. Max size: 5MB
     """
-    return await process_prediction(file, save_result, current_user, db)
+    return await process_prediction(file, save_result, current_user, db, include_explanation)
 
 @router.post(
     "/{prediction_id}/feedback",

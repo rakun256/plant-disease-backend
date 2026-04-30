@@ -14,6 +14,7 @@ class PredictionResponse(BaseModel):
     supported_classes: List[str]
     warning: str
     image_quality: "ImageQualityResponse"
+    explanation: Optional["GradCamExplanationResponse"] = None
 
 class PredictionHistoryResponse(BaseModel):
     id: int
@@ -39,6 +40,16 @@ class ImageQualityResponse(BaseModel):
     quality_score: float
     is_quality_acceptable: bool
     quality_warnings: List[str]
+
+class GradCamExplanationResponse(BaseModel):
+    method: str
+    target_class: str
+    target_layer: str
+    image_format: str
+    overlay_image_base64: str
+    heatmap_image_base64: str
+    disclaimer: str
+    explanation_time_ms: Optional[float] = None
 
 class PredictionFeedbackCreate(BaseModel):
     is_correct: bool

@@ -1,5 +1,6 @@
 import os
 import asyncio
+import io
 
 os.environ["DEBUG"] = "false"
 os.environ.setdefault("SECRET_KEY", "test-secret-key")
@@ -22,6 +23,7 @@ from app.models.disease import Disease, DiseaseRecommendation
 from app.models.prediction import Prediction
 from app.models.prediction_feedback import PredictionFeedback
 from app.models.user import User
+from app.schemas.prediction import GradCamExplanationResponse
 from app.services.image_quality_service import assess_image_quality
 from app.services import prediction_service
 
@@ -295,6 +297,24 @@ def create_good_quality_image(width: int = 256, height: int = 256) -> Image.Imag
     return image
 
 
+def image_file_tuple(image: Image.Image = None):
+    image = image or create_good_quality_image()
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    buffer.seek(0)
+    return ("leaf.png", buffer, "image/png")
+
+
+def mock_prediction_dependencies(monkeypatch):
+    monkeypatch.setattr(prediction_service, "preprocess_image", lambda image: object())
+    monkeypatch.setattr(
+        prediction_service,
+        "predict",
+        lambda tensor: ("rust", 0.91, {"healthy": 0.01, "rust": 0.91, "scab": 0.08}),
+    )
+    monkeypatch.setattr(prediction_service.ml_manager, "model_version", "test-model")
+
+
 def test_prediction_response_includes_latency_and_low_confidence(monkeypatch, db_session):
     user = create_user(db_session, "owner@example.com")
 
@@ -323,6 +343,7 @@ def test_prediction_response_includes_latency_and_low_confidence(monkeypatch, db
     assert response.image_quality.width == 256
     assert response.image_quality.is_quality_acceptable is True
     assert response.warning == "The model confidence is low. Please retake the image under better lighting or consult an agricultural expert."
+    assert response.explanation is None
 
 
 def test_saved_prediction_persists_latency_and_low_confidence(monkeypatch, db_session):
@@ -352,6 +373,114 @@ def test_saved_prediction_persists_latency_and_low_confidence(monkeypatch, db_se
     assert saved_prediction.image_quality_score is not None
     assert saved_prediction.is_quality_acceptable is True
     assert saved_prediction.quality_warnings_json == "[]"
+
+
+def test_prediction_endpoint_without_explanation_returns_null(client, db_session, monkeypatch):
+    user = create_user(db_session, "owner@example.com")
+    mock_prediction_dependencies(monkeypatch)
+
+    response = client.post(
+        "/api/v1/predictions/",
+        headers=auth_headers(user),
+        data={"save_result": "false", "include_explanation": "false"},
+        files={"file": image_file_tuple()},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["predicted_class"] == "rust"
+    assert data["confidence"] == 0.91
+    assert data["image_quality"]["is_quality_acceptable"] is True
+    assert data["explanation"] is None
+
+
+def test_prediction_endpoint_with_explanation_returns_gradcam_object(client, db_session, monkeypatch):
+    user = create_user(db_session, "owner@example.com")
+    mock_prediction_dependencies(monkeypatch)
+
+    def fake_generate_gradcam_explanation(**kwargs):
+        return GradCamExplanationResponse(
+            method="Grad-CAM",
+            target_class=kwargs["class_name"],
+            target_layer="layer4",
+            image_format="png",
+            overlay_image_base64="overlay-base64",
+            heatmap_image_base64="heatmap-base64",
+            disclaimer="Grad-CAM is an approximate visual explanation of model attention and is not a replacement for expert agricultural diagnosis.",
+            explanation_time_ms=12.34,
+        )
+
+    monkeypatch.setattr(prediction_service, "generate_gradcam_explanation", fake_generate_gradcam_explanation)
+    monkeypatch.setattr(prediction_service.ml_manager, "is_loaded", True)
+    monkeypatch.setattr(prediction_service.ml_manager, "model", object())
+    monkeypatch.setattr(prediction_service.ml_manager, "device", "cpu")
+
+    response = client.post(
+        "/api/v1/predictions/",
+        headers=auth_headers(user),
+        data={"save_result": "false", "include_explanation": "true"},
+        files={"file": image_file_tuple()},
+    )
+
+    assert response.status_code == 200
+    explanation = response.json()["explanation"]
+    assert explanation["method"] == "Grad-CAM"
+    assert explanation["target_class"] == "rust"
+    assert explanation["overlay_image_base64"] == "overlay-base64"
+    assert explanation["heatmap_image_base64"] == "heatmap-base64"
+    assert explanation["explanation_time_ms"] == 12.34
+
+
+def test_prediction_endpoint_handles_gradcam_failure_gracefully(client, db_session, monkeypatch):
+    user = create_user(db_session, "owner@example.com")
+    mock_prediction_dependencies(monkeypatch)
+
+    def failing_generate_gradcam_explanation(**kwargs):
+        raise RuntimeError("Grad-CAM failed")
+
+    monkeypatch.setattr(prediction_service, "generate_gradcam_explanation", failing_generate_gradcam_explanation)
+    monkeypatch.setattr(prediction_service.ml_manager, "is_loaded", True)
+    monkeypatch.setattr(prediction_service.ml_manager, "model", object())
+
+    response = client.post(
+        "/api/v1/predictions/",
+        headers=auth_headers(user),
+        data={"save_result": "false", "include_explanation": "true"},
+        files={"file": image_file_tuple()},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["explanation"] is None
+    assert "Grad-CAM explanation could not be generated for this image." in data["warning"]
+
+
+def test_prediction_endpoint_invalid_image_keeps_existing_validation(client, db_session):
+    user = create_user(db_session, "owner@example.com")
+    invalid_file = ("leaf.png", io.BytesIO(b"not-an-image"), "image/png")
+
+    response = client.post(
+        "/api/v1/predictions/",
+        headers=auth_headers(user),
+        data={"save_result": "false", "include_explanation": "true"},
+        files={"file": invalid_file},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Uploaded file is not a valid image"
+
+
+def test_prediction_openapi_contains_include_explanation(client):
+    response = client.get("/openapi.json")
+
+    assert response.status_code == 200
+    openapi_schema = response.json()
+    request_schema_ref = openapi_schema["paths"]["/api/v1/predictions/"]["post"]["requestBody"]["content"][
+        "multipart/form-data"
+    ]["schema"]["$ref"]
+    request_schema_name = request_schema_ref.split("/")[-1]
+    request_schema = openapi_schema["components"]["schemas"][request_schema_name]
+    assert "include_explanation" in request_schema["properties"]
 
 
 def test_history_returns_latency_and_low_confidence(client, db_session):
