@@ -83,8 +83,8 @@ def upgrade() -> None:
         sa.Column('prevention', sa.Text(), nullable=True),
         sa.Column('severity_level', sa.String(), nullable=True),
         sa.Column('disclaimer', sa.Text(), nullable=False),
-        sa.Column('created_at', sa.DateTime(), server_default=sa.text('now()'), nullable=True),
-        sa.Column('updated_at', sa.DateTime(), server_default=sa.text('now()'), nullable=True),
+        sa.Column('created_at', sa.DateTime(), server_default=sa.text('CURRENT_TIMESTAMP'), nullable=True),
+        sa.Column('updated_at', sa.DateTime(), server_default=sa.text('CURRENT_TIMESTAMP'), nullable=True),
         sa.PrimaryKeyConstraint('id'),
         sa.UniqueConstraint('slug'),
     )
@@ -123,7 +123,7 @@ def upgrade() -> None:
 
     connection = op.get_bind()
     for disease in DISEASES:
-        result = connection.execute(
+        connection.execute(
             disease_table.insert().values(
                 slug=disease["slug"],
                 name=disease["name"],
@@ -135,7 +135,9 @@ def upgrade() -> None:
                 disclaimer=DISCLAIMER,
             )
         )
-        disease_id = result.inserted_primary_key[0]
+        disease_id = connection.execute(
+            sa.select(disease_table.c.id).where(disease_table.c.slug == disease["slug"])
+        ).scalar_one()
         op.bulk_insert(
             recommendation_table,
             [
