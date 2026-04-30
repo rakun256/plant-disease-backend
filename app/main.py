@@ -37,3 +37,7 @@ app.include_router(analytics.router, prefix=f"{settings.API_V1_PREFIX}/analytics
 @app.get("/")
 def read_root():
     return {"message": "Welcome to Plant Disease Classifier API"}
+
+@app.head("/")
+def head_root():
+    return None
