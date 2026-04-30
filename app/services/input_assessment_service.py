@@ -20,7 +20,11 @@ def build_input_assessment(
             "The model confidence is low, so this image may be outside the supported apple leaf classes."
         )
 
-    if image_quality is not None and not image_quality.is_quality_acceptable:
+    has_critical_quality_warning = False
+    if image_quality is not None:
+        has_critical_quality_warning = _has_critical_quality_warning(image_quality.quality_warnings)
+
+    if image_quality is not None and (not image_quality.is_quality_acceptable or has_critical_quality_warning):
         reason_codes.append(LOW_IMAGE_QUALITY_REASON)
         if image_quality.quality_warnings:
             message_parts.extend(image_quality.quality_warnings)
@@ -39,3 +43,20 @@ def build_input_assessment(
         reason_codes=reason_codes,
         message=" ".join(message_parts),
     )
+
+
+def _has_critical_quality_warning(warnings: list[str]) -> bool:
+    if not warnings:
+        return False
+    critical_markers = (
+        "too dark",
+        "too bright",
+        "low contrast",
+        "blurry",
+        "resolution is low",
+    )
+    for warning in warnings:
+        warning_lower = warning.lower()
+        if any(marker in warning_lower for marker in critical_markers):
+            return True
+    return False

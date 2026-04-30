@@ -16,6 +16,7 @@ from app.models.user import User
 from app.utils.logger import logger
 import json
 import time
+import torch
 from typing import Optional
 
 async def process_prediction(
@@ -27,14 +28,28 @@ async def process_prediction(
 ) -> PredictionResponse:
     # 1. Validation and Read
     image = await validate_and_open_image(file)
+
+    if settings.DEBUG:
+        logger.info(
+            "Debug image: size=%sx%s mode=%s",
+            image.width,
+            image.height,
+            image.mode,
+        )
     
     # 2. Preprocess
     image_quality = assess_image_quality(image)
     tensor = preprocess_image(image)
+
+    if settings.DEBUG:
+        _log_tensor_stats(tensor)
     
     # 3. Inference
     inference_start = time.perf_counter()
     predicted_class, confidence, scores = predict(tensor)
+
+    if settings.DEBUG:
+        _log_prediction_debug(predicted_class, scores)
     inference_time_ms = round((time.perf_counter() - inference_start) * 1000, 2)
     is_low_confidence = confidence < settings.LOW_CONFIDENCE_THRESHOLD
     warning_messages = [LOW_CONFIDENCE_WARNING_MESSAGE if is_low_confidence else WARNING_MESSAGE]
@@ -81,6 +96,36 @@ async def process_prediction(
         input_assessment=input_assessment,
         explanation=explanation
     )
+
+
+def _log_tensor_stats(tensor: torch.Tensor) -> None:
+    if not settings.DEBUG:
+        return
+    tensor_stats = {
+        "min": float(tensor.min().item()),
+        "max": float(tensor.max().item()),
+        "mean": float(tensor.mean().item()),
+        "std": float(tensor.std().item()),
+    }
+    logger.info(
+        "Debug preprocess tensor: shape=%s min=%.4f max=%.4f mean=%.4f std=%.4f",
+        tuple(tensor.shape),
+        tensor_stats["min"],
+        tensor_stats["max"],
+        tensor_stats["mean"],
+        tensor_stats["std"],
+    )
+
+
+def _log_prediction_debug(predicted_class: str, scores: dict) -> None:
+    if not settings.DEBUG:
+        return
+    class_to_index = {class_name: index for index, class_name in CLASS_MAPPING.items()}
+    predicted_index = class_to_index.get(predicted_class)
+    top_scores = sorted(scores.items(), key=lambda item: item[1], reverse=True)[:3]
+    logger.info("Debug prediction: class_index=%s", predicted_index)
+    logger.info("Debug prediction: class_mapping=%s", CLASS_MAPPING)
+    logger.info("Debug prediction: top_scores=%s", top_scores)
 
 
 def _build_explanation(

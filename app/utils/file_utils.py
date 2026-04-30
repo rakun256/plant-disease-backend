@@ -9,6 +9,7 @@ async def validate_and_open_image(file: UploadFile) -> Image.Image:
         raise InvalidImageException(f"Unsupported file type: {file.content_type}")
     
     content = await file.read()
+    await file.seek(0)
     if len(content) > settings.MAX_IMAGE_SIZE_MB * 1024 * 1024:
         raise InvalidImageException(f"File size exceeds {settings.MAX_IMAGE_SIZE_MB}MB")
         

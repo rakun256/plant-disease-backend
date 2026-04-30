@@ -23,8 +23,9 @@ from app.models.disease import Disease, DiseaseRecommendation
 from app.models.prediction import Prediction
 from app.models.prediction_feedback import PredictionFeedback
 from app.models.user import User
-from app.schemas.prediction import GradCamExplanationResponse
+from app.schemas.prediction import GradCamExplanationResponse, ImageQualityResponse
 from app.services.image_quality_service import assess_image_quality
+from app.services.input_assessment_service import build_input_assessment
 from app.services import prediction_service
 
 
@@ -422,6 +423,49 @@ def test_prediction_endpoint_low_quality_returns_should_not_show_prediction(clie
     assert data["input_assessment"]["should_show_prediction"] is False
     assert data["input_assessment"]["reason_codes"] == ["LOW_IMAGE_QUALITY"]
     assert "The image is too dark. Please use better lighting." in data["input_assessment"]["message"]
+
+
+def test_input_assessment_marks_critical_quality_warnings_even_when_quality_acceptable():
+    image_quality = ImageQualityResponse(
+        width=256,
+        height=256,
+        brightness_score=10.0,
+        contrast_score=30.0,
+        blur_score=50.0,
+        quality_score=0.9,
+        is_quality_acceptable=True,
+        quality_warnings=["The image is too dark. Please use better lighting."],
+    )
+
+    assessment = build_input_assessment(False, image_quality)
+
+    assert assessment.should_show_prediction is False
+    assert "LOW_IMAGE_QUALITY" in assessment.reason_codes
+    assert "too dark" in assessment.message.lower()
+
+
+def test_prediction_low_confidence_and_low_quality_returns_both_reasons(monkeypatch, db_session):
+    user = create_user(db_session, "owner@example.com")
+
+    async def fake_dark_image(_):
+        return Image.new("RGB", (256, 256), (10, 10, 10))
+
+    monkeypatch.setattr(prediction_service, "validate_and_open_image", fake_dark_image)
+    monkeypatch.setattr(prediction_service, "preprocess_image", lambda image: object())
+    monkeypatch.setattr(
+        prediction_service,
+        "predict",
+        lambda tensor: ("healthy", 0.6, {"healthy": 0.6, "rust": 0.3, "scab": 0.1}),
+    )
+    monkeypatch.setattr(prediction_service.ml_manager, "model_version", "test-model")
+
+    response = asyncio.run(
+        prediction_service.process_prediction(DummyUploadFile(), save_result=False, user=user, db=db_session)
+    )
+
+    assert response.is_low_confidence is True
+    assert response.image_quality.is_quality_acceptable is False
+    assert response.input_assessment.reason_codes == ["LOW_CONFIDENCE", "LOW_IMAGE_QUALITY"]
 
 
 def test_prediction_endpoint_with_explanation_returns_gradcam_object(client, db_session, monkeypatch):

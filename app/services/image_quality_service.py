@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import List
+from typing import List, Tuple
 
 import numpy as np
 from PIL import Image
@@ -36,8 +36,7 @@ def assess_image_quality(image: Image.Image) -> ImageQualityResult:
     width, height = image.size
     grayscale = np.asarray(image.convert("L"), dtype=np.float32)
 
-    brightness_score = round(float(np.mean(grayscale)), 2)
-    contrast_score = round(float(np.std(grayscale)), 2)
+    brightness_score, contrast_score = _compute_brightness_contrast(grayscale)
     blur_score = round(_calculate_gradient_variance(grayscale), 2)
 
     quality_warnings = []
@@ -57,6 +56,8 @@ def assess_image_quality(image: Image.Image) -> ImageQualityResult:
     if not blur_ok:
         quality_warnings.append("The image appears blurry. Please retake the photo with a steady camera.")
 
+    has_critical_warning = bool(quality_warnings)
+
     quality_score = round(
         (
             _resolution_component(width, height)
@@ -68,6 +69,9 @@ def assess_image_quality(image: Image.Image) -> ImageQualityResult:
         2,
     )
 
+    if has_critical_warning:
+        quality_score = round(min(quality_score, settings.IMAGE_QUALITY_CRITICAL_WARNING_CAP), 2)
+
     return ImageQualityResult(
         width=width,
         height=height,
@@ -75,9 +79,28 @@ def assess_image_quality(image: Image.Image) -> ImageQualityResult:
         contrast_score=contrast_score,
         blur_score=blur_score,
         quality_score=quality_score,
-        is_quality_acceptable=quality_score >= settings.IMAGE_QUALITY_ACCEPTABLE_THRESHOLD,
+        is_quality_acceptable=(
+            quality_score >= settings.IMAGE_QUALITY_ACCEPTABLE_THRESHOLD and not has_critical_warning
+        ),
         quality_warnings=quality_warnings,
     )
+
+
+def _compute_brightness_contrast(grayscale: np.ndarray) -> Tuple[float, float]:
+    mask_threshold = settings.IMAGE_FOREGROUND_DARK_THRESHOLD
+    min_ratio = settings.IMAGE_FOREGROUND_MIN_RATIO
+    max_ratio = settings.IMAGE_FOREGROUND_MAX_RATIO
+    mask = grayscale > mask_threshold
+    mask_ratio = float(np.mean(mask))
+
+    if min_ratio <= mask_ratio <= max_ratio:
+        pixels = grayscale[mask]
+    else:
+        pixels = grayscale.ravel()
+
+    brightness_score = round(float(np.mean(pixels)), 2)
+    contrast_score = round(float(np.std(pixels)), 2)
+    return brightness_score, contrast_score
 
 
 def _calculate_gradient_variance(grayscale: np.ndarray) -> float:
@@ -94,10 +117,12 @@ def _resolution_component(width: int, height: int) -> float:
 
 def _brightness_component(brightness_score: float) -> float:
     if brightness_score < settings.IMAGE_DARK_THRESHOLD:
-        return max(brightness_score / settings.IMAGE_DARK_THRESHOLD, 0)
+        ratio = max(brightness_score / settings.IMAGE_DARK_THRESHOLD, 0)
+        return round(ratio * ratio, 2)
     if brightness_score > settings.IMAGE_BRIGHT_THRESHOLD:
         overexposed_range = 255 - settings.IMAGE_BRIGHT_THRESHOLD
-        return max((255 - brightness_score) / overexposed_range, 0)
+        ratio = max((255 - brightness_score) / overexposed_range, 0)
+        return round(ratio * ratio, 2)
     return 1
 
 
