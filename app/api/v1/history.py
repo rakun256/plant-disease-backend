@@ -16,7 +16,14 @@ def get_prediction_history(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    predictions = db.query(Prediction).filter(Prediction.user_id == current_user.id).offset(skip).limit(limit).all()
+    predictions = (
+        db.query(Prediction)
+        .filter(Prediction.user_id == current_user.id)
+        .order_by(Prediction.created_at.desc(), Prediction.id.desc())
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
     
     results = []
     for p in predictions:

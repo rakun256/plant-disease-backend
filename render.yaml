@@ -4,11 +4,10 @@ services:
     env: docker
     region: frankfurt
     plan: free # Veya starter
-    healthCheckPath: /api/v1/health
+    healthCheckPath: /api/v1/health/
     envVars:
       - key: DATABASE_URL
       - key: SECRET_KEY
         generateValue: true
       - key: MODEL_PATH
         value: models/resnet50_best.pt
-

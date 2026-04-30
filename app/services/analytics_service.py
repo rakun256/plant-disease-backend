@@ -71,7 +71,7 @@ def get_user_analytics_summary(user: User, db: Session) -> AnalyticsSummaryRespo
         low_confidence_count=low_confidence_count,
         low_confidence_rate=low_confidence_count / total_predictions,
         average_inference_time_ms=(
-            float(average_inference_time_ms) if average_inference_time_ms is not None else None
+            round(float(average_inference_time_ms), 2) if average_inference_time_ms is not None else None
         ),
         latest_prediction=(
             LatestPredictionSummary.model_validate(latest_prediction)

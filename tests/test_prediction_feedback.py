@@ -220,6 +220,19 @@ def test_create_prediction_feedback_rejects_invalid_corrected_class(client, db_s
     assert response.status_code == 422
 
 
+def test_create_prediction_feedback_rejects_corrected_class_when_correct(client, db_session):
+    user = create_user(db_session, "owner@example.com")
+    prediction = create_prediction(db_session, user)
+
+    response = client.post(
+        f"/api/v1/predictions/{prediction.id}/feedback",
+        headers=auth_headers(user),
+        json={"is_correct": True, "corrected_class": "rust"},
+    )
+
+    assert response.status_code == 422
+
+
 class DummyUploadFile:
     filename = "leaf.jpg"
 
@@ -238,13 +251,15 @@ def test_prediction_response_includes_latency_and_low_confidence(monkeypatch, db
         "predict",
         lambda tensor: ("rust", 0.69, {"healthy": 0.05, "rust": 0.69, "scab": 0.26}),
     )
+    perf_counter_values = iter([10.0, 10.123456])
+    monkeypatch.setattr(prediction_service.time, "perf_counter", lambda: next(perf_counter_values))
     monkeypatch.setattr(prediction_service.ml_manager, "model_version", "test-model")
 
     response = asyncio.run(
         prediction_service.process_prediction(DummyUploadFile(), save_result=False, user=user, db=db_session)
     )
 
-    assert response.inference_time_ms >= 0
+    assert response.inference_time_ms == 123.46
     assert response.is_low_confidence is True
     assert response.warning == "The model confidence is low. Please retake the image under better lighting or consult an agricultural expert."
 
@@ -284,6 +299,29 @@ def test_history_returns_latency_and_low_confidence(client, db_session):
     assert data[0]["id"] == prediction.id
     assert data[0]["inference_time_ms"] == 12.5
     assert data[0]["is_low_confidence"] is False
+
+
+def test_history_returns_newest_predictions_first(client, db_session):
+    user = create_user(db_session, "owner@example.com")
+    now = datetime.now(timezone.utc)
+    older = create_prediction(
+        db_session,
+        user,
+        predicted_class="healthy",
+        created_at=now - timedelta(minutes=10),
+    )
+    newer = create_prediction(
+        db_session,
+        user,
+        predicted_class="scab",
+        created_at=now,
+    )
+
+    response = client.get("/api/v1/history/", headers=auth_headers(user))
+
+    assert response.status_code == 200
+    ids = [item["id"] for item in response.json()]
+    assert ids == [newer.id, older.id]
 
 
 def test_get_existing_disease_slug_returns_database_data(client, db_session):

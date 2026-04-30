@@ -22,7 +22,7 @@ async def process_prediction(file: UploadFile, save_result: bool, user: User, db
     # 3. Inference
     inference_start = time.perf_counter()
     predicted_class, confidence, scores = predict(tensor)
-    inference_time_ms = (time.perf_counter() - inference_start) * 1000
+    inference_time_ms = round((time.perf_counter() - inference_start) * 1000, 2)
     is_low_confidence = confidence < settings.LOW_CONFIDENCE_THRESHOLD
     warning = LOW_CONFIDENCE_WARNING_MESSAGE if is_low_confidence else WARNING_MESSAGE
     

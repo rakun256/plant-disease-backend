@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from typing import Dict, List, Optional
 from datetime import datetime
 from app.core.constants import SUPPORTED_CLASSES
@@ -43,6 +43,12 @@ class PredictionFeedbackCreate(BaseModel):
             supported_classes = ", ".join(SUPPORTED_CLASSES)
             raise ValueError(f"corrected_class must be one of: {supported_classes}")
         return normalized_value
+
+    @model_validator(mode="after")
+    def validate_corrected_class_with_is_correct(self):
+        if self.is_correct and self.corrected_class is not None:
+            raise ValueError("corrected_class must be null when is_correct is true")
+        return self
 
 class PredictionFeedbackResponse(BaseModel):
     id: int
