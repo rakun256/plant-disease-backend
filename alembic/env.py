@@ -12,6 +12,7 @@ from app.models.base import Base
 import app.models.user
 import app.models.prediction
 import app.models.prediction_feedback
+import app.models.disease
 
 config = context.config
 

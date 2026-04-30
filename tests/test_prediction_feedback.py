@@ -16,6 +16,7 @@ from app.core.security import create_access_token
 from app.db.database import get_db
 from app.main import app as fastapi_app
 from app.models.base import Base
+from app.models.disease import Disease, DiseaseRecommendation
 from app.models.prediction import Prediction
 from app.models.prediction_feedback import PredictionFeedback
 from app.models.user import User
@@ -86,6 +87,28 @@ def create_prediction(db_session, user: User) -> Prediction:
 def auth_headers(user: User) -> dict[str, str]:
     token = create_access_token({"sub": user.email})
     return {"Authorization": f"Bearer {token}"}
+
+
+def create_disease(db_session, slug: str = "rust") -> Disease:
+    disease = Disease(
+        slug=slug,
+        name="Cedar Apple Rust",
+        description="A fungal disease that may cause yellow to orange leaf spots.",
+        symptoms="Yellow-orange spots on apple leaves.",
+        causes="A rust fungus favored by wet spring conditions.",
+        prevention="Monitor trees, improve airflow, and follow local guidance.",
+        severity_level="moderate",
+        disclaimer="This information is based on an AI-assisted prediction and general plant disease guidance. It is not a replacement for diagnosis by a qualified agricultural expert.",
+    )
+    disease.recommendations = [
+        DiseaseRecommendation(recommendation="Confirm symptoms on multiple leaves.", order_index=1),
+        DiseaseRecommendation(recommendation="Consult a local agricultural expert.", order_index=2),
+        DiseaseRecommendation(recommendation="Improve orchard airflow where practical.", order_index=3),
+    ]
+    db_session.add(disease)
+    db_session.commit()
+    db_session.refresh(disease)
+    return disease
 
 
 def test_create_prediction_feedback_success(client, db_session):
@@ -250,3 +273,51 @@ def test_history_returns_latency_and_low_confidence(client, db_session):
     assert data[0]["id"] == prediction.id
     assert data[0]["inference_time_ms"] == 12.5
     assert data[0]["is_low_confidence"] is False
+
+
+def test_get_existing_disease_slug_returns_database_data(client, db_session):
+    disease = create_disease(db_session)
+
+    response = client.get(f"/api/v1/diseases/{disease.slug}")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["name"] == disease.name
+    assert data["slug"] == disease.slug
+    assert data["description"] == disease.description
+    assert data["symptoms"] == disease.symptoms
+    assert data["causes"] == disease.causes
+    assert data["prevention"] == disease.prevention
+    assert data["severity_level"] == disease.severity_level
+    assert "not a replacement for diagnosis" in data["disclaimer"]
+
+
+def test_get_unknown_disease_slug_returns_404(client):
+    response = client.get("/api/v1/diseases/unknown")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Disease not found"
+
+
+def test_get_disease_recommendations_are_returned_in_order(client, db_session):
+    create_disease(db_session)
+
+    response = client.get("/api/v1/diseases/rust")
+
+    assert response.status_code == 200
+    assert response.json()["recommendations"] == [
+        "Confirm symptoms on multiple leaves.",
+        "Consult a local agricultural expert.",
+        "Improve orchard airflow where practical.",
+    ]
+
+
+def test_get_disease_keeps_backward_compatible_fields(client, db_session):
+    create_disease(db_session)
+
+    response = client.get("/api/v1/diseases/rust")
+
+    assert response.status_code == 200
+    data = response.json()
+    for field in ["name", "slug", "description", "recommendations", "disclaimer"]:
+        assert field in data
