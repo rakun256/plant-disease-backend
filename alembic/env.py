@@ -11,6 +11,7 @@ from app.core.config import settings
 from app.models.base import Base
 import app.models.user
 import app.models.prediction
+import app.models.prediction_feedback
 
 config = context.config
 

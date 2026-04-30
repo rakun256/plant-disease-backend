@@ -1,4 +1,5 @@
 from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Text
+from sqlalchemy.orm import relationship
 from datetime import datetime, timezone
 from app.models.base import Base
 
@@ -13,3 +14,4 @@ class Prediction(Base):
     scores_json = Column(Text)  # JSON string
     model_version = Column(String)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    feedback_records = relationship("PredictionFeedback", back_populates="prediction")
