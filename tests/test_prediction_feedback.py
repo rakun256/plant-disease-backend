@@ -1,4 +1,5 @@
 import os
+import asyncio
 
 os.environ["DEBUG"] = "false"
 os.environ.setdefault("SECRET_KEY", "test-secret-key")
@@ -18,6 +19,7 @@ from app.models.base import Base
 from app.models.prediction import Prediction
 from app.models.prediction_feedback import PredictionFeedback
 from app.models.user import User
+from app.services import prediction_service
 
 
 SQLALCHEMY_DATABASE_URL = "sqlite://"
@@ -70,6 +72,8 @@ def create_prediction(db_session, user: User) -> Prediction:
         image_name="leaf.jpg",
         predicted_class="rust",
         confidence=0.93,
+        inference_time_ms=12.5,
+        is_low_confidence=False,
         scores_json='{"healthy": 0.01, "rust": 0.93, "scab": 0.06}',
         model_version="test-model",
     )
@@ -180,3 +184,69 @@ def test_create_prediction_feedback_rejects_invalid_corrected_class(client, db_s
     )
 
     assert response.status_code == 422
+
+
+class DummyUploadFile:
+    filename = "leaf.jpg"
+
+
+async def fake_validate_and_open_image(file):
+    return object()
+
+
+def test_prediction_response_includes_latency_and_low_confidence(monkeypatch, db_session):
+    user = create_user(db_session, "owner@example.com")
+
+    monkeypatch.setattr(prediction_service, "validate_and_open_image", fake_validate_and_open_image)
+    monkeypatch.setattr(prediction_service, "preprocess_image", lambda image: object())
+    monkeypatch.setattr(
+        prediction_service,
+        "predict",
+        lambda tensor: ("rust", 0.69, {"healthy": 0.05, "rust": 0.69, "scab": 0.26}),
+    )
+    monkeypatch.setattr(prediction_service.ml_manager, "model_version", "test-model")
+
+    response = asyncio.run(
+        prediction_service.process_prediction(DummyUploadFile(), save_result=False, user=user, db=db_session)
+    )
+
+    assert response.inference_time_ms >= 0
+    assert response.is_low_confidence is True
+    assert response.warning == "The model confidence is low. Please retake the image under better lighting or consult an agricultural expert."
+
+
+def test_saved_prediction_persists_latency_and_low_confidence(monkeypatch, db_session):
+    user = create_user(db_session, "owner@example.com")
+
+    monkeypatch.setattr(prediction_service, "validate_and_open_image", fake_validate_and_open_image)
+    monkeypatch.setattr(prediction_service, "preprocess_image", lambda image: object())
+    monkeypatch.setattr(
+        prediction_service,
+        "predict",
+        lambda tensor: ("healthy", 0.95, {"healthy": 0.95, "rust": 0.03, "scab": 0.02}),
+    )
+    monkeypatch.setattr(prediction_service.ml_manager, "model_version", "test-model")
+
+    response = asyncio.run(
+        prediction_service.process_prediction(DummyUploadFile(), save_result=True, user=user, db=db_session)
+    )
+    saved_prediction = db_session.query(Prediction).filter(Prediction.user_id == user.id).one()
+
+    assert response.inference_time_ms >= 0
+    assert response.is_low_confidence is False
+    assert saved_prediction.inference_time_ms is not None
+    assert saved_prediction.inference_time_ms >= 0
+    assert saved_prediction.is_low_confidence is False
+
+
+def test_history_returns_latency_and_low_confidence(client, db_session):
+    user = create_user(db_session, "owner@example.com")
+    prediction = create_prediction(db_session, user)
+
+    response = client.get("/api/v1/history/", headers=auth_headers(user))
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data[0]["id"] == prediction.id
+    assert data[0]["inference_time_ms"] == 12.5
+    assert data[0]["is_low_confidence"] is False

@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     DATABASE_URL: str
     
     MODEL_PATH: str = "models/apple_disease_model.pth"
+    LOW_CONFIDENCE_THRESHOLD: float = 0.70
     MAX_IMAGE_SIZE_MB: int = 5
     ALLOWED_IMAGE_TYPES: str = "image/jpeg,image/png"
 

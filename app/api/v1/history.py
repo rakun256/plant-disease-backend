@@ -25,6 +25,8 @@ def get_prediction_history(
             image_name=p.image_name,
             predicted_class=p.predicted_class,
             confidence=p.confidence,
+            inference_time_ms=p.inference_time_ms,
+            is_low_confidence=p.is_low_confidence,
             model_version=p.model_version,
             created_at=p.created_at,
             scores=json.loads(p.scores_json) if p.scores_json else {}

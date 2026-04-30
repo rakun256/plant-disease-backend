@@ -8,6 +8,8 @@ class PredictionResponse(BaseModel):
     model_version: str
     predicted_class: str
     confidence: float
+    inference_time_ms: float
+    is_low_confidence: bool
     scores: Dict[str, float]
     supported_classes: List[str]
     warning: str
@@ -17,6 +19,8 @@ class PredictionHistoryResponse(BaseModel):
     image_name: str
     predicted_class: str
     confidence: float
+    inference_time_ms: Optional[float] = None
+    is_low_confidence: bool
     model_version: str
     created_at: datetime
     scores: Dict[str, float]
