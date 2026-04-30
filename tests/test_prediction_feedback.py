@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
+from datetime import datetime, timedelta, timezone
 
 from app.api.dependencies import get_current_user
 from app.core.security import create_access_token
@@ -67,16 +68,26 @@ def create_user(db_session, email: str) -> User:
     return user
 
 
-def create_prediction(db_session, user: User) -> Prediction:
+def create_prediction(
+    db_session,
+    user: User,
+    predicted_class: str = "rust",
+    confidence: float = 0.93,
+    inference_time_ms: float = 12.5,
+    is_low_confidence: bool = False,
+    model_version: str = "test-model",
+    created_at: datetime = None,
+) -> Prediction:
     prediction = Prediction(
         user_id=user.id,
         image_name="leaf.jpg",
-        predicted_class="rust",
-        confidence=0.93,
-        inference_time_ms=12.5,
-        is_low_confidence=False,
+        predicted_class=predicted_class,
+        confidence=confidence,
+        inference_time_ms=inference_time_ms,
+        is_low_confidence=is_low_confidence,
         scores_json='{"healthy": 0.01, "rust": 0.93, "scab": 0.06}',
-        model_version="test-model",
+        model_version=model_version,
+        created_at=created_at or datetime.now(timezone.utc),
     )
     db_session.add(prediction)
     db_session.commit()
@@ -321,3 +332,88 @@ def test_get_disease_keeps_backward_compatible_fields(client, db_session):
     data = response.json()
     for field in ["name", "slug", "description", "recommendations", "disclaimer"]:
         assert field in data
+
+
+def test_analytics_summary_requires_authentication(client):
+    response = client.get("/api/v1/analytics/summary")
+
+    assert response.status_code == 401
+
+
+def test_analytics_summary_empty_history(client, db_session):
+    user = create_user(db_session, "owner@example.com")
+
+    response = client.get("/api/v1/analytics/summary", headers=auth_headers(user))
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "total_predictions": 0,
+        "class_distribution": {},
+        "average_confidence": None,
+        "low_confidence_count": 0,
+        "low_confidence_rate": 0.0,
+        "average_inference_time_ms": None,
+        "latest_prediction": None,
+        "model_version_distribution": {},
+    }
+
+
+def test_analytics_summary_multiple_predictions_excludes_other_users(client, db_session):
+    user = create_user(db_session, "owner@example.com")
+    other_user = create_user(db_session, "other@example.com")
+    now = datetime.now(timezone.utc)
+    create_prediction(
+        db_session,
+        user,
+        predicted_class="healthy",
+        confidence=0.9,
+        inference_time_ms=100,
+        is_low_confidence=False,
+        model_version="resnet50_v1",
+        created_at=now - timedelta(minutes=3),
+    )
+    create_prediction(
+        db_session,
+        user,
+        predicted_class="rust",
+        confidence=0.6,
+        inference_time_ms=200,
+        is_low_confidence=True,
+        model_version="resnet50_v1",
+        created_at=now - timedelta(minutes=2),
+    )
+    latest = create_prediction(
+        db_session,
+        user,
+        predicted_class="scab",
+        confidence=0.8,
+        inference_time_ms=300,
+        is_low_confidence=False,
+        model_version="resnet50_v2",
+        created_at=now - timedelta(minutes=1),
+    )
+    create_prediction(
+        db_session,
+        other_user,
+        predicted_class="rust",
+        confidence=0.1,
+        inference_time_ms=999,
+        is_low_confidence=True,
+        model_version="other-model",
+        created_at=now,
+    )
+
+    response = client.get("/api/v1/analytics/summary", headers=auth_headers(user))
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total_predictions"] == 3
+    assert data["class_distribution"] == {"healthy": 1, "rust": 1, "scab": 1}
+    assert data["average_confidence"] == pytest.approx((0.9 + 0.6 + 0.8) / 3)
+    assert data["low_confidence_count"] == 1
+    assert data["low_confidence_rate"] == pytest.approx(1 / 3)
+    assert data["average_inference_time_ms"] == pytest.approx(200)
+    assert data["model_version_distribution"] == {"resnet50_v1": 2, "resnet50_v2": 1}
+    assert data["latest_prediction"]["id"] == latest.id
+    assert data["latest_prediction"]["predicted_class"] == "scab"
+    assert data["latest_prediction"]["confidence"] == 0.8

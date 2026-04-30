@@ -2,7 +2,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
-from app.api.v1 import health, predictions, history, diseases, auth
+from app.api.v1 import analytics, health, predictions, history, diseases, auth
 from app.ml.model_loader import ml_manager
 
 app = FastAPI(
@@ -32,6 +32,7 @@ app.include_router(auth.router, prefix=f"{settings.API_V1_PREFIX}/auth", tags=["
 app.include_router(predictions.router, prefix=f"{settings.API_V1_PREFIX}/predictions", tags=["Predictions"])
 app.include_router(history.router, prefix=f"{settings.API_V1_PREFIX}/history", tags=["History"])
 app.include_router(diseases.router, prefix=f"{settings.API_V1_PREFIX}/diseases", tags=["Diseases"])
+app.include_router(analytics.router, prefix=f"{settings.API_V1_PREFIX}/analytics", tags=["Analytics"])
 
 @app.get("/")
 def read_root():
