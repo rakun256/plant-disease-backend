@@ -21,15 +21,26 @@ def get_user_analytics_summary(user: User, db: Session) -> AnalyticsSummaryRespo
             low_confidence_count=0,
             low_confidence_rate=0,
             average_inference_time_ms=None,
+            average_image_quality_score=None,
+            low_quality_count=0,
+            low_quality_rate=0,
             latest_prediction=None,
             model_version_distribution={},
         )
 
-    average_confidence, low_confidence_count, average_inference_time_ms = (
+    (
+        average_confidence,
+        low_confidence_count,
+        average_inference_time_ms,
+        average_image_quality_score,
+        low_quality_count,
+    ) = (
         db.query(
             func.avg(Prediction.confidence),
             func.sum(case((Prediction.is_low_confidence == True, 1), else_=0)),
             func.avg(Prediction.inference_time_ms),
+            func.avg(Prediction.image_quality_score),
+            func.sum(case((Prediction.is_quality_acceptable == False, 1), else_=0)),
         )
         .filter(Prediction.user_id == user.id)
         .one()
@@ -63,6 +74,7 @@ def get_user_analytics_summary(user: User, db: Session) -> AnalyticsSummaryRespo
     )
 
     low_confidence_count = int(low_confidence_count or 0)
+    low_quality_count = int(low_quality_count or 0)
 
     return AnalyticsSummaryResponse(
         total_predictions=total_predictions,
@@ -73,6 +85,11 @@ def get_user_analytics_summary(user: User, db: Session) -> AnalyticsSummaryRespo
         average_inference_time_ms=(
             round(float(average_inference_time_ms), 2) if average_inference_time_ms is not None else None
         ),
+        average_image_quality_score=(
+            round(float(average_image_quality_score), 2) if average_image_quality_score is not None else None
+        ),
+        low_quality_count=low_quality_count,
+        low_quality_rate=low_quality_count / total_predictions,
         latest_prediction=(
             LatestPredictionSummary.model_validate(latest_prediction)
             if latest_prediction is not None

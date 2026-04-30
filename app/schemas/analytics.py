@@ -20,5 +20,8 @@ class AnalyticsSummaryResponse(BaseModel):
     low_confidence_count: int
     low_confidence_rate: float
     average_inference_time_ms: Optional[float] = None
+    average_image_quality_score: Optional[float] = None
+    low_quality_count: int
+    low_quality_rate: float
     latest_prediction: Optional[LatestPredictionSummary] = None
     model_version_distribution: Dict[str, int]

@@ -13,6 +13,7 @@ class PredictionResponse(BaseModel):
     scores: Dict[str, float]
     supported_classes: List[str]
     warning: str
+    image_quality: "ImageQualityResponse"
 
 class PredictionHistoryResponse(BaseModel):
     id: int
@@ -24,9 +25,20 @@ class PredictionHistoryResponse(BaseModel):
     model_version: str
     created_at: datetime
     scores: Dict[str, float]
+    image_quality: Optional["ImageQualityResponse"] = None
 
     class Config:
         from_attributes = True
+
+class ImageQualityResponse(BaseModel):
+    width: int
+    height: int
+    brightness_score: float
+    contrast_score: float
+    blur_score: float
+    quality_score: float
+    is_quality_acceptable: bool
+    quality_warnings: List[str]
 
 class PredictionFeedbackCreate(BaseModel):
     is_correct: bool

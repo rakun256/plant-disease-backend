@@ -7,6 +7,7 @@ os.environ.setdefault("DATABASE_URL", "sqlite://")
 
 import pytest
 from fastapi.testclient import TestClient
+from PIL import Image
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -21,6 +22,7 @@ from app.models.disease import Disease, DiseaseRecommendation
 from app.models.prediction import Prediction
 from app.models.prediction_feedback import PredictionFeedback
 from app.models.user import User
+from app.services.image_quality_service import assess_image_quality
 from app.services import prediction_service
 
 
@@ -77,6 +79,9 @@ def create_prediction(
     is_low_confidence: bool = False,
     model_version: str = "test-model",
     created_at: datetime = None,
+    image_quality_score: float = 0.86,
+    is_quality_acceptable: bool = True,
+    quality_warnings_json: str = "[]",
 ) -> Prediction:
     prediction = Prediction(
         user_id=user.id,
@@ -85,6 +90,14 @@ def create_prediction(
         confidence=confidence,
         inference_time_ms=inference_time_ms,
         is_low_confidence=is_low_confidence,
+        image_width=1024,
+        image_height=768,
+        image_brightness_score=128.45,
+        image_contrast_score=52.1,
+        image_blur_score=315.78,
+        image_quality_score=image_quality_score,
+        is_quality_acceptable=is_quality_acceptable,
+        quality_warnings_json=quality_warnings_json,
         scores_json='{"healthy": 0.01, "rust": 0.93, "scab": 0.06}',
         model_version=model_version,
         created_at=created_at or datetime.now(timezone.utc),
@@ -233,12 +246,53 @@ def test_create_prediction_feedback_rejects_corrected_class_when_correct(client,
     assert response.status_code == 422
 
 
+def test_good_quality_synthetic_image_is_acceptable():
+    quality = assess_image_quality(create_good_quality_image())
+
+    assert quality.width == 256
+    assert quality.height == 256
+    assert quality.is_quality_acceptable is True
+    assert quality.quality_warnings == []
+    assert quality.quality_score == 1.0
+
+
+def test_dark_image_returns_dark_warning():
+    quality = assess_image_quality(Image.new("RGB", (256, 256), (10, 10, 10)))
+
+    assert quality.is_quality_acceptable is False
+    assert "The image is too dark. Please use better lighting." in quality.quality_warnings
+
+
+def test_small_image_returns_low_resolution_warning():
+    quality = assess_image_quality(Image.new("RGB", (100, 100), (128, 128, 128)))
+
+    assert quality.is_quality_acceptable is False
+    assert "The image resolution is low. Please upload a larger image." in quality.quality_warnings
+
+
+def test_low_detail_image_returns_blur_warning():
+    quality = assess_image_quality(Image.new("RGB", (256, 256), (128, 128, 128)))
+
+    assert quality.is_quality_acceptable is False
+    assert "The image appears blurry. Please retake the photo with a steady camera." in quality.quality_warnings
+
+
 class DummyUploadFile:
     filename = "leaf.jpg"
 
 
 async def fake_validate_and_open_image(file):
-    return object()
+    return create_good_quality_image()
+
+
+def create_good_quality_image(width: int = 256, height: int = 256) -> Image.Image:
+    image = Image.new("RGB", (width, height), "white")
+    pixels = image.load()
+    for y in range(height):
+        for x in range(width):
+            value = 60 if (x // 8 + y // 8) % 2 == 0 else 190
+            pixels[x, y] = (value, value, value)
+    return image
 
 
 def test_prediction_response_includes_latency_and_low_confidence(monkeypatch, db_session):
@@ -261,6 +315,13 @@ def test_prediction_response_includes_latency_and_low_confidence(monkeypatch, db
 
     assert response.inference_time_ms == 123.46
     assert response.is_low_confidence is True
+    assert response.model_version == "test-model"
+    assert response.predicted_class == "rust"
+    assert response.confidence == 0.69
+    assert response.scores == {"healthy": 0.05, "rust": 0.69, "scab": 0.26}
+    assert response.supported_classes == ["healthy", "rust", "scab"]
+    assert response.image_quality.width == 256
+    assert response.image_quality.is_quality_acceptable is True
     assert response.warning == "The model confidence is low. Please retake the image under better lighting or consult an agricultural expert."
 
 
@@ -286,6 +347,11 @@ def test_saved_prediction_persists_latency_and_low_confidence(monkeypatch, db_se
     assert saved_prediction.inference_time_ms is not None
     assert saved_prediction.inference_time_ms >= 0
     assert saved_prediction.is_low_confidence is False
+    assert saved_prediction.image_width == 256
+    assert saved_prediction.image_height == 256
+    assert saved_prediction.image_quality_score is not None
+    assert saved_prediction.is_quality_acceptable is True
+    assert saved_prediction.quality_warnings_json == "[]"
 
 
 def test_history_returns_latency_and_low_confidence(client, db_session):
@@ -299,6 +365,27 @@ def test_history_returns_latency_and_low_confidence(client, db_session):
     assert data[0]["id"] == prediction.id
     assert data[0]["inference_time_ms"] == 12.5
     assert data[0]["is_low_confidence"] is False
+    assert data[0]["image_quality"]["quality_score"] == 0.86
+    assert data[0]["image_quality"]["is_quality_acceptable"] is True
+
+
+def test_history_handles_old_records_without_quality_metadata(client, db_session):
+    user = create_user(db_session, "owner@example.com")
+    prediction = create_prediction(db_session, user)
+    prediction.image_width = None
+    prediction.image_height = None
+    prediction.image_brightness_score = None
+    prediction.image_contrast_score = None
+    prediction.image_blur_score = None
+    prediction.image_quality_score = None
+    prediction.is_quality_acceptable = None
+    prediction.quality_warnings_json = None
+    db_session.commit()
+
+    response = client.get("/api/v1/history/", headers=auth_headers(user))
+
+    assert response.status_code == 200
+    assert response.json()[0]["image_quality"] is None
 
 
 def test_history_returns_newest_predictions_first(client, db_session):
@@ -391,6 +478,9 @@ def test_analytics_summary_empty_history(client, db_session):
         "low_confidence_count": 0,
         "low_confidence_rate": 0.0,
         "average_inference_time_ms": None,
+        "average_image_quality_score": None,
+        "low_quality_count": 0,
+        "low_quality_rate": 0.0,
         "latest_prediction": None,
         "model_version_distribution": {},
     }
@@ -407,6 +497,8 @@ def test_analytics_summary_multiple_predictions_excludes_other_users(client, db_
         confidence=0.9,
         inference_time_ms=100,
         is_low_confidence=False,
+        image_quality_score=0.9,
+        is_quality_acceptable=True,
         model_version="resnet50_v1",
         created_at=now - timedelta(minutes=3),
     )
@@ -417,6 +509,8 @@ def test_analytics_summary_multiple_predictions_excludes_other_users(client, db_
         confidence=0.6,
         inference_time_ms=200,
         is_low_confidence=True,
+        image_quality_score=0.4,
+        is_quality_acceptable=False,
         model_version="resnet50_v1",
         created_at=now - timedelta(minutes=2),
     )
@@ -427,6 +521,8 @@ def test_analytics_summary_multiple_predictions_excludes_other_users(client, db_
         confidence=0.8,
         inference_time_ms=300,
         is_low_confidence=False,
+        image_quality_score=0.8,
+        is_quality_acceptable=True,
         model_version="resnet50_v2",
         created_at=now - timedelta(minutes=1),
     )
@@ -451,6 +547,9 @@ def test_analytics_summary_multiple_predictions_excludes_other_users(client, db_
     assert data["low_confidence_count"] == 1
     assert data["low_confidence_rate"] == pytest.approx(1 / 3)
     assert data["average_inference_time_ms"] == pytest.approx(200)
+    assert data["average_image_quality_score"] == pytest.approx(0.7)
+    assert data["low_quality_count"] == 1
+    assert data["low_quality_rate"] == pytest.approx(1 / 3)
     assert data["model_version_distribution"] == {"resnet50_v1": 2, "resnet50_v2": 1}
     assert data["latest_prediction"]["id"] == latest.id
     assert data["latest_prediction"]["predicted_class"] == "scab"

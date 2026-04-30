@@ -14,6 +14,13 @@ class Settings(BaseSettings):
     
     MODEL_PATH: str = "models/apple_disease_model.pth"
     LOW_CONFIDENCE_THRESHOLD: float = 0.70
+    IMAGE_MIN_WIDTH: int = 224
+    IMAGE_MIN_HEIGHT: int = 224
+    IMAGE_DARK_THRESHOLD: float = 50.0
+    IMAGE_BRIGHT_THRESHOLD: float = 215.0
+    IMAGE_LOW_CONTRAST_THRESHOLD: float = 25.0
+    IMAGE_BLUR_THRESHOLD: float = 20.0
+    IMAGE_QUALITY_ACCEPTABLE_THRESHOLD: float = 0.60
     MAX_IMAGE_SIZE_MB: int = 5
     ALLOWED_IMAGE_TYPES: str = "image/jpeg,image/png"
 
