@@ -32,6 +32,9 @@ class Settings(BaseSettings):
     MAX_IMAGE_SIZE_MB: int = 5
     ALLOWED_IMAGE_TYPES: str = "image/jpeg,image/png"
 
+    KEEP_ALIVE_CRON: str = "0 9 * * *"
+    KEEP_ALIVE_TIMEZONE: str = "Europe/Istanbul"
+
     @property
     def allowed_image_types_list(self) -> List[str]:
         return self.ALLOWED_IMAGE_TYPES.split(",")
